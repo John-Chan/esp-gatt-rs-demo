@@ -24,7 +24,10 @@ experimental = ["esp-idf-svc/experimental"]
 
 [dependencies]
 log = "0.4"
-esp-idf-svc = { version = "0.51", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
+esp-idf-svc = { version = "0.51", features = ["experimental","critical-section", "embassy-time-driver", "embassy-sync"] }
+anyhow = "1.0.98"
+heapless = { version = "0.8", default-features = false }
+enumset = { version = "1", default-features = false }
 
 [build-dependencies]
 embuild = "0.33"
