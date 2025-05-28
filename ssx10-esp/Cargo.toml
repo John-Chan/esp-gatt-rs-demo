@@ -1,0 +1,16 @@
+[package]
+name = "ssx10-esp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+log = { workspace = true }
+esp-idf-svc = { workspace = true }
+enumset = { workspace = true }
+heapless = { workspace = true }
+espble = { path = "../crates/espble" }
+
+[build-dependencies]
+embuild = { workspace = true }
