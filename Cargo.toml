@@ -1,5 +1,6 @@
 [workspace]
 members = ["ssx10-esp", "crates/espble"]
+resolver = "2"
 
 [workspace.dependencies]
 anyhow = "1.0.98"

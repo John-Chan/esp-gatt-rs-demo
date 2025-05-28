@@ -4,10 +4,26 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 
+[[bin]]
+name = "ssx10-esp"
+harness = false # do not use the built in cargo test harness -> resolve rust-analyzer errors
+
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+debug = true    # Symbols are nice and they don't increase the size on Flash
+opt-level = "z"
+
+[features]
+default = ["experimental"]
+
+experimental = ["esp-idf-svc/experimental"]
+
 [dependencies]
 anyhow = { workspace = true }
 log = { workspace = true }
-esp-idf-svc = { workspace = true }
+esp-idf-svc = { workspace = true,  features = ["critical-section", "embassy-time-driver", "embassy-sync"]}
 enumset = { workspace = true }
 heapless = { workspace = true }
 espble = { path = "../crates/espble" }
