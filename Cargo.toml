@@ -10,6 +10,11 @@ rust-version = "1.77"
 name = "esp-gatt-rs-demo"
 harness = false # do not use the built in cargo test harness -> resolve rust-analyzer errors
 
+[lib]
+name = "ssx10_esp"
+path = "src/lib.rs"
+harness = false # do not use the built in cargo test harness -> resolve rust-analyzer errors
+
 [profile.release]
 opt-level = "s"
 
