@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
 
 use esp_idf_svc::{
     bt::ble::{
@@ -10,6 +10,7 @@ use esp_idf_svc::{
     },
     sys::EspError,
 };
+use esp_idf_svc::bt::{Ble, BtDriver};
 
 pub mod gatt;
 pub mod service;
@@ -54,16 +55,20 @@ pub trait ServiceCommunication {
     fn notify_event(&mut self, event: ServiceEvent);
 }
 
+pub type BleDriver = BtDriver<'static, Ble>;
+pub type EspBleGapRef = Arc<EspBleGap<'static, Ble, Arc<BleDriver>>>;
+pub type EspGattsRef = Arc<EspGatts<'static, Ble, Arc<BleDriver>>>;
+
 /// BLE 服务器管理器
 pub struct BleServer {
-    gap: Arc<EspBleGap<'static>>,
-    gatts: Arc<EspGatts<'static>>,
+    gap: EspBleGapRef,
+    gatts: EspGattsRef,
     services: Vec<Box<dyn BleService>>,
 }
 
 impl BleServer {
     /// 创建新的 BLE 服务器实例
-    pub fn new(gap: Arc<EspBleGap<'static>>, gatts: Arc<EspGatts<'static>>) -> Self {
+    pub fn new(gap: EspBleGapRef, gatts: EspGattsRef) -> Self {
         Self {
             gap,
             gatts,
@@ -99,7 +104,7 @@ impl BleServer {
     }
 
     /// 注册服务
-    fn register_service(&self, service: &mut Box<dyn BleService>) -> Result<(), BleError> {
+    fn register_service(&mut self, service: &mut Box<dyn BleService>) -> Result<(), BleError> {
         service.on_register(self.gatts.clone())?;
         Ok(())
     }
