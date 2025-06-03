@@ -1,10 +1,9 @@
 use esp_idf_svc::{
-    bt::ble::gatt::server::{ConnectionId, EspGatts},
+    bt::ble::gatt::server::ConnectionId,
     bt::BdAddr,
 };
-use std::sync::Arc;
 
-use super::{BleError, ServiceCommunication};
+use super::{BleError, EspGattsRef, ServiceCommunication};
 
 /// BLE 服务的基本特征
 pub trait BleService: ServiceCommunication {
@@ -12,7 +11,7 @@ pub trait BleService: ServiceCommunication {
     fn service_uuid(&self) -> u128;
 
     /// 服务注册时调用
-    fn on_register(&mut self, gatts: Arc<EspGatts<'static>>) -> Result<(), BleError>;
+    fn on_register(&mut self, gatts: EspGattsRef) -> Result<(), BleError>;
 
     /// 客户端连接时调用
     fn on_connect(&mut self, conn_id: ConnectionId, addr: BdAddr) -> Result<(), BleError>;

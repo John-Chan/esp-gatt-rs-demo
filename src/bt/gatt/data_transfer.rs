@@ -1,5 +1,7 @@
-use std::sync::{Arc, Mutex};
-
+use crate::bt::service::BleService;
+use crate::bt::{BleError, EspGattsRef, ServiceCommunication, ServiceEvent};
+use enumset::EnumSet;
+use esp_idf_svc::bt::ble::gatt::GattId;
 use esp_idf_svc::{
     bt::ble::gatt::{
         server::{ConnectionId, EspGatts},
@@ -7,9 +9,7 @@ use esp_idf_svc::{
     },
     bt::{BdAddr, BtUuid},
 };
-
-use crate::bt::service::BleService;
-use crate::bt::{BleError, ServiceCommunication, ServiceEvent};
+use std::sync::{Arc, Mutex};
 
 /// 数据传输服务的状态
 #[derive(Default)]
@@ -23,7 +23,7 @@ struct DataTransferState {
 /// 数据传输服务
 pub struct DataTransferService {
     state: Arc<Mutex<DataTransferState>>,
-    gatts: Option<Arc<EspGatts<'static>>>,
+    gatts: Option<EspGattsRef>,
 }
 
 impl DataTransferService {
@@ -73,16 +73,18 @@ impl BleService for DataTransferService {
         0xad91b201734740479e173bed82d75f9d
     }
 
-    fn on_register(&mut self, gatts: Arc<EspGatts<'static>>) -> Result<(), BleError> {
+    fn on_register(&mut self, gatts: EspGattsRef) -> Result<(), BleError> {
         self.gatts = Some(gatts.clone());
 
-        let service_uuid = BtUuid::uuid128(self.service_uuid());
-        let service_id = GattServiceId {
-            uuid: service_uuid,
-            is_primary: true,
-            instance_id: 0,
+        let gattid = GattId {
+            uuid: BtUuid::uuid128(self.service_uuid()),
+            // FIXME: inst_id
+            inst_id: 0,
         };
-
+        let service_id = GattServiceId {
+            id: gattid,
+            is_primary: true,
+        };
         // 创建服务
         let service_handle = gatts.create_service(&service_id, 4)?;
 
@@ -93,8 +95,8 @@ impl BleService for DataTransferService {
         let recv_uuid = BtUuid::uuid128(0xb6fccb5087be44f3ae22f85485ea42c4);
         let recv_char = GattCharacteristic {
             uuid: recv_uuid,
-            permissions: Permission::WRITE,
-            properties: Property::WRITE,
+            permissions: EnumSet::from(Permission::Write),
+            properties: EnumSet::from(Property::Write),
             max_len: 512,
             auto_rsp: AutoResponse::ByApp,
         };

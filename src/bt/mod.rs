@@ -1,5 +1,6 @@
-use std::sync::{Arc};
+use std::sync::Arc;
 
+use esp_idf_svc::bt::{Ble, BtDriver, BtStatus};
 use esp_idf_svc::{
     bt::ble::{
         gap::{AdvConfiguration, BleGapEvent, EspBleGap},
@@ -10,7 +11,7 @@ use esp_idf_svc::{
     },
     sys::EspError,
 };
-use esp_idf_svc::bt::{Ble, BtDriver};
+use log::info;
 
 pub mod gatt;
 pub mod service;
@@ -90,9 +91,14 @@ impl BleServer {
     /// 启动 BLE 服务器
     pub fn start(&mut self) -> Result<(), BleError> {
         // 注册所有服务
-        for service in &mut self.services {
+        let mut temp_services = Vec::new();
+        std::mem::swap(&mut self.services, &mut temp_services);
+
+        for service in &mut temp_services {
             self.register_service(service)?;
         }
+
+        std::mem::swap(&mut self.services, &mut temp_services);
 
         // 配置广播
         self.configure_advertising()?;
@@ -180,7 +186,8 @@ impl BleServer {
     pub fn on_gap_event(&mut self, event: BleGapEvent) -> Result<(), BleError> {
         match event {
             BleGapEvent::AdvertisingConfigured(status) => {
-                if status.is_ok() {
+                info!("Got status: {status:?}");
+                if matches!(status, BtStatus::Success) {
                     self.start_advertising()?;
                 }
             }
