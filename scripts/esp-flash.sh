@@ -18,4 +18,4 @@ case "$1" in
     ;;
 esac
 
-espflash flash --baud  115200 --M target/xtensa-esp32-espidf/${BUILD_MODE}/esp-gatt-rs-demo
+espflash flash --baud  115200 -M target/xtensa-esp32-espidf/${BUILD_MODE}/esp-gatt-rs-demo

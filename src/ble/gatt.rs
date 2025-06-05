@@ -1,13 +1,16 @@
+use enumset::enum_set;
 use esp_idf_svc::bt::ble::gap::{AdvConfiguration, BleGapEvent, EspBleGap};
 use esp_idf_svc::bt::ble::gatt::server::{ConnectionId, EspGatts, GattsEvent, TransferId};
-use esp_idf_svc::bt::ble::gatt::{GattInterface, GattServiceId, GattStatus, Handle};
-use esp_idf_svc::bt::{BdAddr, Ble, BtDriver, BtStatus};
+use esp_idf_svc::bt::ble::gatt::{
+    AutoResponse, GattCharacteristic, GattId, GattInterface, GattServiceId, GattStatus, Handle,
+    Permission, Property,
+};
+use esp_idf_svc::bt::{BdAddr, Ble, BtDriver, BtStatus, BtUuid};
 use esp_idf_svc::sys::{EspError, ESP_FAIL};
 use log::{info, warn};
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::ops::Deref;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub enum BtError {
@@ -150,6 +153,70 @@ impl BleServer {
         Ok(())
     }
 
+    fn create_service(&self, gatt_if: GattInterface) -> Result<GattServiceId> {
+        //self.state.lock().unwrap().gatt_if = Some(gatt_if);
+
+        self.gap.set_device_name(&self.device_name)?;
+        self.gap.set_adv_conf(&self.adv_conf)?;
+
+        let svc_uuid: u128 = 0xad91b201734740479e173bed82d71111;
+        let service_id = GattServiceId {
+            id: GattId {
+                uuid: BtUuid::uuid128(svc_uuid),
+                inst_id: 0,
+            },
+            is_primary: true,
+        };
+        self.gatts.create_service(gatt_if, &service_id, 8)?;
+
+        Ok(service_id)
+    }
+
+    /// Configure and start the service
+    /// Called from within the event callback once we are notified that the service is created
+    fn configure_and_start_service(&self, service_handle: Handle) -> Result<()> {
+        //self.state.lock().unwrap().service_handle = Some(service_handle);
+
+        self.gatts.start_service(service_handle)?;
+        self.add_characteristics(service_handle)?;
+
+        Ok(())
+    }
+
+    pub const RECV_CHARACTERISTIC_UUID: u128 = 0xb6fccb5087be44f3ae22f85485ea42c4;
+    /// Our "indicate" characteristic - i.e. where clients can receive data if they subscribe to it
+    pub const IND_CHARACTERISTIC_UUID: u128 = 0x503de214868246c4828fd59144da41be;
+
+    /// Add our two characteristics to the service
+    /// Called from within the event callback once we are notified that the service is created
+    fn add_characteristics(&self, service_handle: Handle) -> Result<()> {
+        self.gatts.add_characteristic(
+            service_handle,
+            &GattCharacteristic {
+                uuid: BtUuid::uuid128(Self::RECV_CHARACTERISTIC_UUID),
+                permissions: enum_set!(Permission::Write),
+                properties: enum_set!(Property::Write),
+                max_len: 200, // Max recv data
+                auto_rsp: AutoResponse::ByApp,
+            },
+            &[],
+        )?;
+
+        self.gatts.add_characteristic(
+            service_handle,
+            &GattCharacteristic {
+                uuid: BtUuid::uuid128(Self::IND_CHARACTERISTIC_UUID),
+                permissions: enum_set!(Permission::Write | Permission::Read),
+                properties: enum_set!(Property::Indicate),
+                max_len: 200, // Mac iondicate data
+                auto_rsp: AutoResponse::ByApp,
+            },
+            &[],
+        )?;
+
+        Ok(())
+    }
+
     fn handle_gap_event(&self, event: BleGapEvent) -> Result<()> {
         info!("Got event: {event:?}");
 
@@ -170,9 +237,9 @@ impl BleServer {
             GattsEvent::ServiceRegistered { status, app_id } => {
                 info!("Service registered,status = {status:?}, app_id = {app_id}");
                 check_gatt_status(status)?;
-                /*if self.app_id == app_id {
+                if self.app_id == app_id {
                     self.create_service(gatt_if)?;
-                }*/
+                }
             }
             GattsEvent::ServiceCreated {
                 status,
@@ -181,7 +248,7 @@ impl BleServer {
             } => {
                 info!("Service created,status = {status:?}, service_handle = {service_handle}");
                 check_gatt_status(status)?;
-                //self.configure_and_start_service(service_handle)?;
+                self.configure_and_start_service(service_handle)?;
             }
             GattsEvent::CharacteristicAdded {
                 status,
@@ -233,6 +300,9 @@ impl BleServer {
             GattsEvent::PeerDisconnected { addr, .. } => {
                 info!("Peer disconnected,addr = {addr:?}");
                 //self.delete_conn(addr)?;
+
+                info!("Advertising restarted");
+                self.gap.start_advertising()?;
             }
             GattsEvent::Write {
                 conn_id,

@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use esp_idf_svc::bt::ble::gap::{AdvConfiguration, EspBleGap};
+use esp_idf_svc::bt::ble::gap::{AdvConfiguration, AppearanceCategory, EspBleGap};
 use esp_idf_svc::bt::ble::gatt::server::EspGatts;
 use esp_idf_svc::bt::{BtDriver, BtUuid};
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -29,6 +29,7 @@ pub fn run() -> anyhow::Result<()> {
         include_name: true,
         include_txpower: true,
         flag: 2,
+        appearance: AppearanceCategory::NetworkDevice, // or PersonalMobilityDevice?
         service_uuid: Some(BtUuid::uuid128(SERVICE_UUID)),
         // service_data: todo!(),
         // manufacturer_data: todo!(),
