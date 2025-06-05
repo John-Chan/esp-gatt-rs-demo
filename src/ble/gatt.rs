@@ -7,10 +7,10 @@ use esp_idf_svc::bt::ble::gatt::{
 };
 use esp_idf_svc::bt::{BdAddr, Ble, BtDriver, BtStatus, BtUuid};
 use esp_idf_svc::sys::{EspError, ESP_FAIL};
-use log::{info, warn};
+use log::{error, info, warn};
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
 pub enum BtError {
@@ -22,8 +22,10 @@ pub enum BtError {
     InvalidHandle,
     /// ESP-IDF 错误
     EspError(EspError),
-    /// 其他错误
-    Other(&'static str),
+    /// 内部错误  TODO: optional case filed
+    Internal(String),
+    /// 其他错误 TODO: optional case filed
+    Other(String),
 }
 impl Display for BtError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -31,8 +33,9 @@ impl Display for BtError {
             BtError::ServiceLimit => write!(f, "Service limit reached"),
             BtError::CharacteristicLimit => write!(f, "Characteristic limit reached"),
             BtError::InvalidHandle => write!(f, "Invalid handle"),
-            BtError::EspError(e) => write!(f, "EspError: {e}"),
-            BtError::Other(s) => write!(f, "Other: {s}"),
+            BtError::EspError(e) => write!(f, "Esp Error: {e}"),
+            BtError::Internal(s) => write!(f, "Internal Error: {s}"),
+            BtError::Other(s) => write!(f, "Other Error: {s}"),
         }
     }
 }
@@ -95,11 +98,7 @@ pub struct ServerState {
     attr_handler: HashMap<Handle, Vec<Handle>>,
 }
 
-pub struct GattContext {
-    gap: BleGapRef,
-    gatts: GattsRef,
-}
-
+pub type ReadyHandler = Box<dyn FnOnce(&GattsRef, &GattInterface) + Send + 'static>;
 #[derive(Clone)]
 pub struct BleServer {
     app_id: u16,
@@ -107,6 +106,7 @@ pub struct BleServer {
     adv_conf: AdvConfiguration<'static>,
     gap: BleGapRef,
     gatts: GattsRef,
+    ready_handler: Arc<Mutex<Option<ReadyHandler>>>,
     //state: Arc<Mutex<ServerState>>,
 }
 
@@ -124,9 +124,19 @@ impl BleServer {
             gap,
             gatts,
             adv_conf,
+            ready_handler: Arc::new(Mutex::new(None)),
         }
     }
 
+    pub fn set_ready_handler<F>(&self, callback: F)
+    where
+        F: FnOnce(&GattsRef, &GattInterface) + Send + 'static,
+    {
+        self.ready_handler
+            .lock()
+            .unwrap()
+            .replace(Box::new(callback));
+    }
     //pub fn run( &server: BleServer<'a>) -> Result<()> {}
     /// Init Gap and start event
     pub fn start(&self) -> Result<()> {
@@ -238,7 +248,34 @@ impl BleServer {
                 info!("Service registered,status = {status:?}, app_id = {app_id}");
                 check_gatt_status(status)?;
                 if self.app_id == app_id {
-                    self.create_service(gatt_if)?;
+                    //self.create_service(gatt_if)?;
+
+                    let mut guard = match self.ready_handler.lock() {
+                        Ok(g) => g,
+                        Err(poison_error) => {
+                            // Mutex 被污染了，通常表示前一个持有锁的线程 panic 了
+                            // 在这种情况下，Mutex 内部的状态可能是不一致的。
+                            eprintln!(
+                                "Error: Mutex poisoned when trying to get callback: {:?}",
+                                poison_error
+                            );
+                            return Err(BtError::Internal(format!(
+                                "Error: Mutex poisoned when trying to get callback: {:?}",
+                                poison_error
+                            )));
+                        }
+                    };
+
+                    let handler = guard.take();
+
+                    match handler {
+                        Some(func) => {
+                            func(&self.gatts, &gatt_if);
+                        }
+                        None => {
+                            error!("Error: Ready handler not set or already executed for GattInterface: {:?}", gatt_if);
+                        }
+                    }
                 }
             }
             GattsEvent::ServiceCreated {
