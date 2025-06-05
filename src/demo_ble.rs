@@ -42,7 +42,7 @@ pub fn run() -> anyhow::Result<()> {
         adv_config,
     );
     info!("Starting gatt server,device name: {}", DEVICE_NAME);
-    server.start_1().map_err(|e| anyhow!(e.to_string()))?;
+    server.start().map_err(|e| anyhow!(e.to_string()))?;
 
     loop {
         info!("running loop");

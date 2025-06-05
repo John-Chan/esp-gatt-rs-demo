@@ -124,41 +124,9 @@ impl BleServer {
         }
     }
 
-    /// Init Gap and start event
-    pub fn start_s(server: &'static BleServer, gap: &BleGapRef, gatts: &GattsRef) -> Result<()> {
-        info!("BLE Gap and Gatts initialized");
-
-        let server_cone = server.clone();
-        let gap_clone = gap.clone();
-        gap.subscribe(move |event| {
-            check_result::<(), BtError>(handle_gap_event(&server_cone, &gap_clone, event));
-        })?;
-
-        let server_cone = server.clone();
-        let gatts_clone = gatts.clone();
-        gatts.subscribe(move |(gatt_if, event)| {
-            check_result::<(), BtError>(handle_gatts_event(
-                &server_cone,
-                &gatts_clone,
-                gatt_if,
-                event,
-            ))
-        })?;
-
-        info!("BLE Gap and Gatts subscriptions initialized");
-
-        gatts
-            .register_app(server.app_id)
-            .map_err(|e| BtError::from(e))?;
-
-        info!("Gatts BTP app registered");
-
-        Ok(())
-    }
-
     //pub fn run( &server: BleServer<'a>) -> Result<()> {}
     /// Init Gap and start event
-    pub fn start_1(&self) -> Result<()> {
+    pub fn start(&self) -> Result<()> {
         info!("BLE Gap and Gatts initialized");
 
         let server_cone = self.clone();
@@ -181,6 +149,7 @@ impl BleServer {
 
         Ok(())
     }
+
     fn handle_gap_event(&self, event: BleGapEvent) -> Result<()> {
         info!("Got event: {event:?}");
 
@@ -301,120 +270,6 @@ impl BleServer {
     }
 }
 
-/// The main event handler for the GAP events
-fn handle_gap_event<'a>(server: &'a BleServer, gap: &BleGapRef, event: BleGapEvent) -> Result<()> {
-    todo!()
-}
-
-/// The main event handler for the GATTS events
-fn handle_gatts_event<'a>(
-    server: &'a BleServer,
-    gatts: &GattsRef,
-    gatt_if: GattInterface,
-    event: GattsEvent,
-) -> Result<()> {
-    info!("Got event: {event:?}");
-
-    match event {
-        GattsEvent::ServiceRegistered { status, app_id } => {
-            info!("Service registered,status = {status:?}, app_id = {app_id}");
-            check_gatt_status(status)?;
-            /*if self.app_id == app_id {
-                self.create_service(gatt_if)?;
-            }*/
-        }
-        GattsEvent::ServiceCreated {
-            status,
-            service_handle,
-            ..
-        } => {
-            info!("Service created,status = {status:?}, service_handle = {service_handle}");
-            check_gatt_status(status)?;
-            //self.configure_and_start_service(service_handle)?;
-        }
-        GattsEvent::CharacteristicAdded {
-            status,
-            attr_handle,
-            service_handle,
-            char_uuid,
-        } => {
-            info!("Characteristic added,status = {status:?}, attr_handle = {attr_handle:?}, service_handle = {service_handle:?}, char_uuid = {char_uuid:?}");
-            check_gatt_status(status)?;
-            //self.register_characteristic(service_handle, attr_handle, char_uuid)?;
-        }
-        GattsEvent::DescriptorAdded {
-            status,
-            attr_handle,
-            service_handle,
-            descr_uuid,
-        } => {
-            info!("Descriptor added,status = {status:?}, attr_handle = {attr_handle:?}, service_handle = {service_handle:?}, descr_uuid = {descr_uuid:?}");
-            check_gatt_status(status)?;
-            //self.register_cccd_descriptor(service_handle, attr_handle, descr_uuid)?;
-        }
-        GattsEvent::ServiceDeleted {
-            status,
-            service_handle,
-        } => {
-            info!("Service deleted,status = {status:?}, service_handle = {service_handle:?}");
-            check_gatt_status(status)?;
-            //self.delete_service(service_handle)?;
-        }
-        GattsEvent::ServiceUnregistered {
-            status,
-            service_handle,
-            ..
-        } => {
-            info!("Service unregistered,status = {status:?}, service_handle = {service_handle:?}");
-            check_gatt_status(status)?;
-            //self.unregister_service(service_handle)?;
-        }
-        GattsEvent::Mtu { conn_id, mtu } => {
-            info!("Mtu,conn_id = {conn_id}, mtu = {mtu}");
-            //self.register_conn_mtu(conn_id, mtu)?;
-        }
-        GattsEvent::PeerConnected { conn_id, addr, .. } => {
-            info!("Peer connected,conn_id = {conn_id}, addr = {addr:?}");
-            //self.create_conn(conn_id, addr)?;
-        }
-        GattsEvent::PeerDisconnected { addr, .. } => {
-            info!("Peer disconnected,addr = {addr:?}");
-            //self.delete_conn(addr)?;
-        }
-        GattsEvent::Write {
-            conn_id,
-            trans_id,
-            addr,
-            handle,
-            offset,
-            need_rsp,
-            is_prep,
-            value,
-        } => {
-            info!("Write,conn_id = {conn_id}, trans_id = {trans_id}, addr = {addr:?}, handle = {handle}, offset = {offset}, need_rsp = {need_rsp}, is_prep = {is_prep}, value = {value:?}");
-            /*let handled = self.recv(
-                gatt_if, conn_id, trans_id, addr, handle, offset, need_rsp, is_prep, value,
-            )?;
-
-            if handled {
-                self.send_write_response(
-                    gatt_if, conn_id, trans_id, handle, offset, need_rsp, is_prep, value,
-                )?;
-            }*/
-        }
-        GattsEvent::Confirm { status, .. } => {
-            info!("Confirm,status = {status:?}");
-            check_gatt_status(status)?;
-            //self.confirm_indication()?;
-        }
-        _ => {
-            info!("Unhandled event: {event:?}");
-            ()
-        }
-    }
-
-    Ok(())
-}
 /*
 pub struct ServiceRegistry {
     services: HashMap<GattServiceId, Box<dyn GattServiceHandler>>,
