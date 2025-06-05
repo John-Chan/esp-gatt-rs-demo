@@ -1,6 +1,9 @@
-use esp_idf_svc::ble::*;
+use esp_idf_svc::bt::ble::gatt::server::{EspGatts, GattsEvent};
+use esp_idf_svc::bt::ble::gatt::{GattInterface, GattServiceId};
+use esp_idf_svc::bt::ble::*;
 use esp_idf_svc::hal::prelude::*;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
+use esp_idf_svc::sys::EspError;
 use std::collections::HashMap;
 
 // 前面定义的 ServiceRegistry 和 BleService trait
@@ -76,7 +79,8 @@ impl BleService for KeyboardService {
     }
 
     fn create(&mut self, gatts: &EspGatts) -> Result<ServiceHandles, EspError> {
-        let service_handle = gatts.create_service(GattInterface::Primary, self.service_id(), 4)?;
+        let service_handle =
+            gatts.create_service(/*GattInterface::Primary*/ 0, self.service_id(), 4)?;
         let char_config = GattCharacteristicConfig {
             uuid: Uuid::Uuid16(0x2A50),
             props: GattCharacteristicProp::READ | GattCharacteristicProp::WRITE,
