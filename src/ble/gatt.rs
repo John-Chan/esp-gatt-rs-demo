@@ -50,6 +50,7 @@ pub type BleGapRef = Arc<EspBleGap<'static, Ble, Arc<BleDriver>>>;
 pub type GattsRef = Arc<EspGatts<'static, Ble, Arc<BleDriver>>>;
 
 /// GattsEvent::Write
+#[derive(Debug)]
 pub struct WriteEvent {
     /// Connection id
     pub conn_id: ConnectionId,
@@ -70,6 +71,7 @@ pub struct WriteEvent {
 }
 
 /// GattsEvent::Read
+#[derive(Debug)]
 pub struct ReadEvent {
     /// Connection id
     pub conn_id: ConnectionId,
@@ -86,28 +88,34 @@ pub struct ReadEvent {
     /// The read operation need to do response
     pub need_rsp: bool,
 }
-pub trait GattServiceHandler {
-    fn on_write(&mut self, gatts: GattsRef, event: &WriteEvent);
-    fn on_read(&mut self, gatts: GattsRef, event: &ReadEvent);
-    fn on_connect(&mut self, gatts: GattsRef, conn_id: u16);
-    fn on_disconnect(&mut self, gatts: GattsRef, conn_id: u16);
+pub trait GattServiceHandler: Send + Sync {
+    fn service_id(&self) -> GattServiceId;
+    fn on_created(&self, gatts: GattsRef, service_id: GattServiceId, handle: Handle) -> Result<()>;
+    fn on_write(&self, gatts: GattsRef, event: &WriteEvent) -> Result<()>;
+    fn on_read(&self, gatts: GattsRef, event: &ReadEvent) -> Result<()>;
+    fn on_connect(&self, gatts: GattsRef, conn_id: u16) -> Result<()>;
+    fn on_disconnect(&self, gatts: GattsRef, conn_id: u16) -> Result<()>;
 }
 
+pub type ServiceHandleVec = Vec<Arc<dyn GattServiceHandler>>;
+pub type ServiceHandleMap = HashMap<Handle, Arc<dyn GattServiceHandler>>;
 pub struct ServerState {
-    services: HashMap<GattServiceId, Box<dyn GattServiceHandler>>,
+    instances: ServiceHandleVec,
+    handlers: ServiceHandleMap,
     attr_handler: HashMap<Handle, Vec<Handle>>,
 }
 
-pub type ReadyHandler = Box<dyn FnOnce(&GattsRef, &GattInterface) + Send + 'static>;
+pub type ReadyHandler =
+    Box<dyn FnOnce(&BleServer, GattInterface) -> Result<ServiceHandleVec> + Send + Sync + 'static>;
 #[derive(Clone)]
 pub struct BleServer {
     app_id: u16,
     device_name: String,
-    adv_conf: AdvConfiguration<'static>,
+    //adv_conf: AdvConfiguration<'static>,
     gap: BleGapRef,
     gatts: GattsRef,
     ready_handler: Arc<Mutex<Option<ReadyHandler>>>,
-    //state: Arc<Mutex<ServerState>>,
+    state: Arc<Mutex<ServerState>>,
 }
 
 impl BleServer {
@@ -116,26 +124,38 @@ impl BleServer {
         device_name: String,
         gap: BleGapRef,
         gatts: GattsRef,
-        adv_conf: AdvConfiguration<'static>,
+        //adv_conf: AdvConfiguration<'static>,
     ) -> Self {
         Self {
             app_id,
             device_name,
             gap,
             gatts,
-            adv_conf,
+            //adv_conf,
             ready_handler: Arc::new(Mutex::new(None)),
+            state: Arc::new(Mutex::new(ServerState {
+                instances: vec![],
+                handlers: HashMap::new(),
+                attr_handler: HashMap::new(),
+            })),
         }
     }
 
-    pub fn set_ready_handler<F>(&self, callback: F)
+    pub fn get_gap(&self) -> BleGapRef {
+        self.gap.clone()
+    }
+    pub fn get_gatts(&self) -> GattsRef {
+        self.gatts.clone()
+    }
+
+    pub fn set_ready_handler<F>(&self, handler: F)
     where
-        F: FnOnce(&GattsRef, &GattInterface) + Send + 'static,
+        F: FnOnce(&BleServer, GattInterface) -> Result<ServiceHandleVec> + Send + Sync + 'static,
     {
         self.ready_handler
             .lock()
-            .unwrap()
-            .replace(Box::new(callback));
+            .expect("ready_handler lock failed")
+            .replace(Box::new(handler));
     }
     //pub fn run( &server: BleServer<'a>) -> Result<()> {}
     /// Init Gap and start event
@@ -159,70 +179,6 @@ impl BleServer {
             .map_err(|e| BtError::from(e))?;
 
         info!("Gatts BTP app registered");
-
-        Ok(())
-    }
-
-    fn create_service(&self, gatt_if: GattInterface) -> Result<GattServiceId> {
-        //self.state.lock().unwrap().gatt_if = Some(gatt_if);
-
-        self.gap.set_device_name(&self.device_name)?;
-        self.gap.set_adv_conf(&self.adv_conf)?;
-
-        let svc_uuid: u128 = 0xad91b201734740479e173bed82d71111;
-        let service_id = GattServiceId {
-            id: GattId {
-                uuid: BtUuid::uuid128(svc_uuid),
-                inst_id: 0,
-            },
-            is_primary: true,
-        };
-        self.gatts.create_service(gatt_if, &service_id, 8)?;
-
-        Ok(service_id)
-    }
-
-    /// Configure and start the service
-    /// Called from within the event callback once we are notified that the service is created
-    fn configure_and_start_service(&self, service_handle: Handle) -> Result<()> {
-        //self.state.lock().unwrap().service_handle = Some(service_handle);
-
-        self.gatts.start_service(service_handle)?;
-        self.add_characteristics(service_handle)?;
-
-        Ok(())
-    }
-
-    pub const RECV_CHARACTERISTIC_UUID: u128 = 0xb6fccb5087be44f3ae22f85485ea42c4;
-    /// Our "indicate" characteristic - i.e. where clients can receive data if they subscribe to it
-    pub const IND_CHARACTERISTIC_UUID: u128 = 0x503de214868246c4828fd59144da41be;
-
-    /// Add our two characteristics to the service
-    /// Called from within the event callback once we are notified that the service is created
-    fn add_characteristics(&self, service_handle: Handle) -> Result<()> {
-        self.gatts.add_characteristic(
-            service_handle,
-            &GattCharacteristic {
-                uuid: BtUuid::uuid128(Self::RECV_CHARACTERISTIC_UUID),
-                permissions: enum_set!(Permission::Write),
-                properties: enum_set!(Property::Write),
-                max_len: 200, // Max recv data
-                auto_rsp: AutoResponse::ByApp,
-            },
-            &[],
-        )?;
-
-        self.gatts.add_characteristic(
-            service_handle,
-            &GattCharacteristic {
-                uuid: BtUuid::uuid128(Self::IND_CHARACTERISTIC_UUID),
-                permissions: enum_set!(Permission::Write | Permission::Read),
-                properties: enum_set!(Property::Indicate),
-                max_len: 200, // Mac iondicate data
-                auto_rsp: AutoResponse::ByApp,
-            },
-            &[],
-        )?;
 
         Ok(())
     }
@@ -270,7 +226,9 @@ impl BleServer {
 
                     match handler {
                         Some(func) => {
-                            func(&self.gatts, &gatt_if);
+                            let services = func(&self, gatt_if)?;
+                            // clear state.service and set services
+                            self.state.lock().expect("failed to lock state").instances = services;
                         }
                         None => {
                             error!("Error: Ready handler not set or already executed for GattInterface: {:?}", gatt_if);
@@ -281,11 +239,29 @@ impl BleServer {
             GattsEvent::ServiceCreated {
                 status,
                 service_handle,
-                ..
+                service_id,
             } => {
                 info!("Service created,status = {status:?}, service_handle = {service_handle}");
                 check_gatt_status(status)?;
-                self.configure_and_start_service(service_handle)?;
+                let instance = self
+                    .state
+                    .lock()
+                    .expect("failed to lock state")
+                    .instances
+                    .iter()
+                    .find(|v| v.service_id().id == service_id.id)
+                    .cloned();
+                if let Some(instance) = instance {
+                    instance.on_created(self.gatts.clone(), service_id, service_handle)?;
+                    self.state
+                        .lock()
+                        .expect("failed to lock state")
+                        .handlers
+                        .insert(service_handle, instance.clone());
+                } else {
+                    error!("Error: Service not found for service_handle: {service_handle}");
+                }
+                //self.configure_and_start_service(service_handle)?;
             }
             GattsEvent::CharacteristicAdded {
                 status,
@@ -442,5 +418,254 @@ pub fn check_gatt_status(status: GattStatus) -> Result<()> {
         Err(BtError::EspError(EspError::from_infallible::<ESP_FAIL>()))
     } else {
         Ok(())
+    }
+}
+
+struct CharHandle {
+    /// Characteristic uuid
+    char_uuid: BtUuid,
+    /// Characteristic attribute handle
+    attr_handle: Option<Handle>,
+    /// Service attribute handle
+    service_handle: Option<Handle>,
+}
+
+impl CharHandle {
+    pub fn new(char_uuid: BtUuid) -> Self {
+        CharHandle {
+            char_uuid,
+            attr_handle: None,
+            service_handle: None,
+        }
+    }
+
+    pub fn update_handle(&mut self, attr_handle: Option<Handle>, service_handle: Option<Handle>) {
+        self.attr_handle = attr_handle;
+        self.service_handle = service_handle;
+    }
+}
+
+struct ServiceRoute {
+    target: Option<Arc<dyn GattServiceHandler>>,
+    service_id: GattServiceId,
+    service_handle: Option<Handle>,
+    char_uuids: Vec<BtUuid>,
+}
+
+#[derive(Default)]
+struct RouteRegistry {
+    services: Vec<ServiceRoute>,
+    char_handles: Vec<CharHandle>,
+}
+
+impl RouteRegistry {
+    /// Register a service,Used to declare a service
+    /// params:
+    /// - `service_id`: Service ID, use `service_id.id` to identify service
+    /// - `char_uuids`: Declare characteristic uuid that the service contains
+    /// - `target`: Service handler
+    /// returns:
+    /// - Error: service already registered
+    pub fn register_service(
+        &mut self,
+        service_id: GattServiceId,
+        char_uuids: &Vec<BtUuid>,
+        target: Arc<dyn GattServiceHandler>,
+    ) -> Result<()> {
+        if let Some(_) = self
+            .services
+            .iter_mut()
+            .find(|s| s.service_id.id == service_id.id)
+        {
+            Err(BtError::Internal(format!(
+                "Service already registered:{:?}",
+                service_id.id
+            )))
+        } else {
+            self.services.push(ServiceRoute {
+                target: Some(target),
+                service_id,
+                char_uuids: char_uuids.clone(),
+                service_handle: None,
+            });
+            Ok(())
+        }
+    }
+
+    /// Update service handle,Call this method when a `GattsEvent::ServiceCreated` event is received
+    /// params:
+    /// - `service_id`: Service ID, use `service_id.id` to identify service
+    /// - `service_handle`: Service handler
+    /// returns:
+    /// - Error: service not register
+    pub fn update_service_handle(
+        &mut self,
+        service_id: &GattServiceId,
+        service_handle: Option<Handle>,
+    ) -> Result<()> {
+        if let Some(route) = self
+            .services
+            .iter_mut()
+            .find(|s| s.service_id.id == service_id.id)
+        {
+            route.service_handle = service_handle;
+            Ok(())
+        } else {
+            Err(BtError::Internal(format!(
+                "Service not register:{:?}",
+                service_id.id
+            )))
+        }
+    }
+
+    /// Update service handle,Call this method when a `GattsEvent::CharacteristicAdded` event is received
+    /// params:
+    /// - `char_uuid`: characteristic id
+    /// - `service_handle`: Service handler
+    /// - `attr_handle`: characteristic handle
+    /// returns:
+    /// - Error: service handle not present
+    pub fn update_character_route(
+        &mut self,
+        char_uuid: BtUuid,
+        service_handle: Handle,
+        attr_handle: Handle,
+    ) -> Result<()> {
+        if let Some(handle) = self
+            .char_handles
+            .iter_mut()
+            .find(|s| s.char_uuid == char_uuid)
+        {
+            handle.update_handle(Some(attr_handle), Some(service_handle));
+            Ok(())
+        } else {
+            Err(BtError::Internal(format!(
+                "Service handle not present:{:?}",
+                service_handle
+            )))
+        }
+    }
+
+    pub fn dispatch_event(&mut self, event: GattsEvent) -> Result<()> {
+        info!("Got event: {event:?}");
+
+        match event {
+            GattsEvent::CharacteristicAdded {
+                status,
+                attr_handle,
+                service_handle,
+                char_uuid,
+            } => {
+                info!("Characteristic added,status = {status:?}, attr_handle = {attr_handle:?}, service_handle = {service_handle:?}, char_uuid = {char_uuid:?}");
+
+                check_gatt_status(status)?;
+                //self.register_characteristic(service_handle, attr_handle, char_uuid)?;
+            }
+            GattsEvent::DescriptorAdded {
+                status,
+                attr_handle,
+                service_handle,
+                descr_uuid,
+            } => {
+                info!("Descriptor added,status = {status:?}, attr_handle = {attr_handle:?}, service_handle = {service_handle:?}, descr_uuid = {descr_uuid:?}");
+                check_gatt_status(status)?;
+                //self.register_cccd_descriptor(service_handle, attr_handle, descr_uuid)?;
+            }
+            GattsEvent::ServiceDeleted {
+                status,
+                service_handle,
+            } => {
+                info!("Service deleted,status = {status:?}, service_handle = {service_handle:?}");
+                check_gatt_status(status)?;
+                //self.delete_service(service_handle)?;
+            }
+            GattsEvent::ServiceUnregistered {
+                status,
+                service_handle,
+                ..
+            } => {
+                info!(
+                    "Service unregistered,status = {status:?}, service_handle = {service_handle:?}"
+                );
+                check_gatt_status(status)?;
+                //self.unregister_service(service_handle)?;
+            }
+            GattsEvent::Mtu { conn_id, mtu } => {
+                info!("Mtu,conn_id = {conn_id}, mtu = {mtu}");
+                //self.register_conn_mtu(conn_id, mtu)?;
+            }
+            GattsEvent::PeerConnected { conn_id, addr, .. } => {
+                info!("Peer connected,conn_id = {conn_id}, addr = {addr:?}");
+                //self.create_conn(conn_id, addr)?;
+            }
+            GattsEvent::PeerDisconnected { addr, .. } => {
+                info!("Peer disconnected,addr = {addr:?}");
+                //self.delete_conn(addr)?;
+
+                info!("Advertising restarted");
+                //self.gap.start_advertising()?;
+            }
+            GattsEvent::Write {
+                conn_id,
+                trans_id,
+                addr,
+                handle,
+                offset,
+                need_rsp,
+                is_prep,
+                value,
+            } => {
+                info!("Write,conn_id = {conn_id}, trans_id = {trans_id}, addr = {addr:?}, handle = {handle}, offset = {offset}, need_rsp = {need_rsp}, is_prep = {is_prep}, value = {value:?}");
+                if let Some(route) = self.find_by_handle(service_handle, attr_handle) {}
+
+                /*let handled = self.recv(
+                    gatt_if, conn_id, trans_id, addr, handle, offset, need_rsp, is_prep, value,
+                )?;
+
+                if handled {
+                    self.send_write_response(
+                        gatt_if, conn_id, trans_id, handle, offset, need_rsp, is_prep, value,
+                    )?;
+                }*/
+            }
+            GattsEvent::Confirm { status, .. } => {
+                info!("Confirm,status = {status:?}");
+                check_gatt_status(status)?;
+                //self.confirm_indication()?;
+            }
+            _ => {
+                info!("Unhandled event: {event:?}");
+                ()
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn find_by_gatt_id(&self, id: GattId) -> Option<&ServiceRoute> {
+        self.services.iter().find(|s| s.service_id.id == id)
+    }
+    pub fn find_by_service_handle(&self, handle: Handle) -> Option<&ServiceRoute> {
+        self.services
+            .iter()
+            .find(|s| s.service_handle == Some(handle))
+    }
+    pub fn find_attr_handler(
+        &self,
+        service_handle: Handle,
+        attr_handle: Handle,
+    ) -> Option<Arc<dyn GattServiceHandler>> {
+        if let Some(route) = self.char_handles.iter().find(|s| {
+            s.service_handle == Some(service_handle) && s.attr_handle == Some(attr_handle)
+        }) {
+            if let Some(s) = self
+                .services
+                .iter()
+                .find(|s| s.service_handle == Some(service_handle))
+            {
+                return s.target.clone();
+            }
+        }
+        None
     }
 }
