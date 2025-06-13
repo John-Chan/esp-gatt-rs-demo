@@ -669,3 +669,30 @@ impl RouteRegistry {
         None
     }
 }
+
+//// new add
+pub struct AttrHanderContext {
+    handle: Handle,
+    char_uuid: BtUuid,
+}
+pub trait AttributeValueHandler: Send + Sync {
+    fn on_write(&self, gatts: GattsRef, event: &WriteEvent) -> Result<()>;
+    fn on_read(&self, gatts: GattsRef, event: &ReadEvent) -> Result<()>;
+}
+pub struct GattServiceContext {
+    /// The service ID that was created
+    id: GattServiceId,
+    /// The handle of the service
+    handle: Option<Handle>,
+    characteristics: HashMap<u128, Handle>,
+}
+
+pub trait ServiceStatusHandler {}
+pub trait GattService: Send + Sync {
+    fn service_id(&self) -> GattServiceId;
+    fn on_created(&self, gatts: GattsRef, service_id: GattServiceId, handle: Handle) -> Result<()>;
+    fn on_write(&self, gatts: GattsRef, char_uuid: BtUuid, event: &WriteEvent) -> Result<()>;
+    fn on_read(&self, gatts: GattsRef, char_uuid: BtUuid, event: &ReadEvent) -> Result<()>;
+    fn on_connect(&self, gatts: GattsRef, conn_id: u16) -> Result<()>;
+    fn on_disconnect(&self, gatts: GattsRef, conn_id: u16) -> Result<()>;
+}
